@@ -1,0 +1,32 @@
+# Python environments and caches
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+
+# Local secrets
+.env
+.env.*
+!.env.example
+
+# Model weights and generated artifacts
+*.pt
+*.pth
+*.onnx
+*.engine
+models/*
+!models/README.md
+data/*
+!data/README.md
+runs/
+logs/
+
+# Local editor and OS state
+.vscode/
+.DS_Store
+Thumbs.db
