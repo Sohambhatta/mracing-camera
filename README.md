@@ -10,7 +10,7 @@ Project workspace for initial live camera capture and cone detection. The capabi
 | Orin with Logitech | Jetson Orin Nano Super, accessed from the laptop through SSH / VS Code Remote SSH | Logitech USB webcam plugged into the Orin | Capture and inference on the Orin, with a live preview accessible from the laptop. |
 | Orin with Basler | Jetson Orin Nano Super, accessed from the laptop through SSH / VS Code Remote SSH | Basler camera connected to the Orin through its confirmed interface | Basler frame acquisition and YOLO inference on the Orin, with a live preview accessible from the laptop. |
 
-Keep camera acquisition separate from model inference and visualization so these modes can share the same downstream pipeline. Each host will need compatible dependencies; moving to the Orin does not imply copying the laptop's Python environment unchanged. The remote preview mechanism will be selected during implementation; SSH alone does not display live video.
+Keep camera acquisition separate from model inference and visualization so these modes can share the same downstream pipeline. Each host will need compatible dependencies; moving to the Orin does not imply copying the laptop's Python environment unchanged. Use a browser preview forwarded through SSH for the initial remote modes, as specified below; SSH alone does not display live video.
 
 For each capability, first verify stable camera frames, then add model inference and detection overlays. Record achieved capture FPS, inference throughput, and end-to-end delay separately. The original Jetson Nano is not a required development target.
 
@@ -67,3 +67,96 @@ The previously discussed Arducam remains a later hardware-integration considerat
 [ALL INFO](https://docs.google.com/document/d/1r2eZJjpH60jpXqhf9EQnMrlORoWUxrvEbyuic_40h4A/edit)
 
 The parent MRACING resources/presentations remain outside this source repository.
+
+## Implementation brief for GitHub Copilot
+
+This section is the requested specification for the first implementation. Read this README and `docs/SETUP.md`, inspect the repository, then implement the three initial capabilities. The next track/localization/path goal is context only: do not implement it in this first stage. Do not add LiDAR, ROS, Arducam support, training pipelines, cloud inference, vehicle commands or autonomous driving yet.
+
+The initial application must acquire frames and run inference locally on the selected host. It must work in preview-only mode before model compatibility is resolved. It should be understandable to a student team: prefer a small Python application with clear modules over a complex framework.
+
+### Architecture and frame handling
+
+Create an installable Python package under `src/mracing_camera/`, with a CLI runnable as `python -m mracing_camera`. Provide separate modules for configuration, camera/file sources, the model adapter, annotation, preview serving and the application lifecycle.
+
+- Source interface: open, read a frame, and close. Standardize on BGR image arrays plus a frame ID and host-side monotonic acquisition timestamp. Distinguish host timestamps from hardware exposure timestamps; do not imply exact sensor latency from a host timestamp alone.
+- Logitech source: use OpenCV USB camera capture. Make the device index/path configurable; support Windows and Linux through appropriate backends, rather than assuming device index 0 always identifies the desired camera.
+- Basler source: use the official pypylon API, support listing devices and selecting a serial number, and convert output to the same BGR representation. Import pypylon only when this source is selected. Check supported camera features before setting them, release grab results and close the camera on exit. Viewer must not need to be open.
+- File sources: accept a saved image or video for repeatable model testing without hardware. End-of-file should exit normally unless looping is explicitly requested.
+- Model adapter: accept a configurable weights path, device (`cpu`, `cuda`, or `auto`), confidence threshold and inference image size. Return detections in original-frame pixel coordinates with class ID, class name, confidence and bounding box. Use the selected model library's documented preprocessing/postprocessing; do not duplicate letterboxing or non-maximum suppression blindly.
+- Overlay: show detections, current processing/capture rates, source resolution and inference duration. Label latency measurements honestly; host-side processing age is not physical camera-to-screen latency.
+
+Use a bounded latest-frame handoff for live sources so slow CPU inference does not build an unbounded queue of old frames. Keep result overlays associated with the frame actually inferred; never draw stale boxes on an unrelated newer frame. Preview-only mode must bypass model loading entirely.
+
+### Model compatibility: resolve, do not guess
+
+`models/best.pt` exists in this local checkout but is intentionally ignored by Git. A fresh clone will need the user to supply it using the link in `models/README.md`. Preserve that checkpoint; do not overwrite it or download substitute weights silently.
+
+“YOLO v27 medium” is an unverified team-reported identifier, not authority to invent an API or package. Inspect checkpoint metadata safely where possible, and determine the actual producing library and version. Do not assume every `.pt` file loads with Ultralytics. If the checkpoint is compatible with a documented loader, integrate it and record the exact package/version and class mapping. Otherwise leave preview fully usable, provide an actionable inference error and ask for the original training/export command or environment. Never report inference as working until a real image succeeds.
+
+Read class names from verified model metadata; do not hard-code UTSMA class IDs into the existing checkpoint. The chosen dataset link does not establish the provenance of best.pt. Training or switching weights is a separate future task.
+
+### Configuration and proposed CLI
+
+Implement these commands as the intended interface; they do not exist yet:
+
+```powershell
+# Logitech preview on the Windows laptop
+python -m mracing_camera preview --source usb --camera 0
+
+# CPU detections from the laptop's Logitech camera
+python -m mracing_camera detect --source usb --camera 0 --weights models/best.pt --device cpu
+
+# Reproducible inference from a saved image
+python -m mracing_camera detect --source image --input data/sample.jpg --weights models/best.pt --device cpu
+
+# Discover Basler devices
+python -m mracing_camera list-cameras --source basler
+```
+
+Support USB, Basler, image and video sources. Require a serial number if multiple Basler devices are connected and none has been explicitly selected. Provide a config file plus CLI overrides; CLI values take precedence. Document defaults, validation and every option.
+
+Suggested defaults: requested camera width 1920, height 1080 and FPS 30; model confidence 0.25; inference size 640 if the verified model supports it. These are starting settings, not measured guarantees. Log the actual negotiated camera settings and report unsupported requests clearly. Use CPU by default for laptop examples; Orin `auto` may choose CUDA only after verifying availability and logging the selected device.
+
+Support `--preview window|web|none`, optional annotated video recording, and a snapshot action. Create recording directories when needed, verify the video writer opened successfully, and document recording playback FPS so it does not imply accurate timing if processing FPS varies. Generated files must stay ignored by Git.
+
+### Orin access and remote live preview
+
+Implement a lightweight browser preview with an MJPEG endpoint and a basic page showing live annotated frames and status. Bind to `127.0.0.1` by default, with a configurable port (default 8080). Multiple viewers must share one capture/inference pipeline. A disconnected browser must not stall acquisition or cause a new camera instance per client.
+
+Example intended workflow once implemented:
+
+```bash
+# On the Orin through VS Code Remote SSH or an SSH shell
+python -m mracing_camera detect --source usb --camera 0 --weights models/best.pt --device auto --preview web --port 8080
+
+# Basler alternative on the Orin
+python -m mracing_camera detect --source basler --serial CAMERA_SERIAL --weights models/best.pt --device auto --preview web --port 8080
+```
+
+Forward remote port 8080 in VS Code, or run `ssh -L 8080:127.0.0.1:8080 USER@ORIN_HOST` from the laptop, then open `http://127.0.0.1:8080` on the laptop. USER, ORIN_HOST and CAMERA_SERIAL are user-supplied placeholders. Do not embed credentials or invent network addresses. SSH setup and real-camera testing require access to the actual board.
+
+### Dependencies, setup and diagnostics
+
+Choose the newest stable Python for which the full selected stack has compatible packages. Re-check current package support during implementation; the research notes in SETUP.md are not a dependency lock. Record the tested Python and package versions. Keep Basler support optional so laptop USB preview works without pypylon. Install a GUI-capable OpenCV package for desktop preview; avoid conflicting OpenCV distributions in one environment.
+
+Provide Windows PowerShell setup/run instructions, `.venv`/VS Code interpreter selection, and separate Jetson Linux instructions. Determine the Orin's JetPack/Ubuntu/Python/CUDA versions before choosing its PyTorch installation; do not assume a generic desktop CUDA wheel works on Jetson. No flashing or system-wide upgrades are authorized by this brief.
+
+Add a diagnostics command reporting Python/OS, installed package versions, model path existence, device availability and camera discovery without requiring all optional dependencies. Report useful errors for missing weights, incompatible checkpoints, unavailable CUDA, camera-open failure, timeout/disconnect and invalid configuration. On `q`/Ctrl+C or failure, release camera resources, stop workers, close windows/writers and stop the server. For this first version, fail clearly on disconnect rather than silently replaying stale frames.
+
+### Validation and completion criteria
+
+Add meaningful automated tests using fake frame sources/model results for configuration precedence, missing-model behavior, original-frame box coordinates, bounded frame handoff, end-of-file and cleanup. Tests must run without a physical camera, weights, Basler SDK or GPU. Use saved/generated test frames where appropriate; avoid committing private recordings or large artifacts.
+
+Document manual checks separately:
+
+1. Windows Logitech preview opens, displays current frames, saves a sample and exits cleanly.
+2. Verified best.pt inference succeeds on a saved image, reports real model classes and overlays detections on the corresponding frame.
+3. Windows Logitech CPU inference runs with measured performance; no 30 FPS inference requirement is assumed.
+4. Orin Logitech capture/inference and browser preview work through an SSH tunnel.
+5. Orin Basler discovery, capture/inference and browser preview work with the full confirmed camera model.
+
+Only mark a mode hardware-verified after running it on that hardware. Implement and test what is possible locally; document the exact unresolved dependency or hardware check for the rest. Do not present mocks as real camera/model validation. Update the README and SETUP.md with actual executable commands, package versions and results when the code is implemented.
+
+### Prompt to start implementation
+
+> Read README.md and docs/SETUP.md. Implement the initial camera application following the Implementation brief for GitHub Copilot. Start with Windows Logitech preview, then verified model inference, and provide the shared architecture and optional Orin/Basler modes. Do not implement the later localization/path goal yet. Resolve model compatibility from evidence, keep preview working if it is unresolved, run hardware-independent tests, and document what still needs actual hardware verification.
