@@ -1,0 +1,16 @@
+{
+  "source": "usb",
+  "camera": "0",
+  "weights": "models/best.pt",
+  "device": "cpu",
+  "confidence": 0.25,
+  "imgsz": 640,
+  "width": 1920,
+  "height": 1080,
+  "fps": 30,
+  "preview": "window",
+  "host": "127.0.0.1",
+  "port": 8080,
+  "loop": false,
+  "model_backend": "ultralytics"
+}

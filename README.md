@@ -1,6 +1,30 @@
 # MRacing Camera
 
-Project workspace for initial live camera capture and cone detection. The capabilities below are the first set of coding goals, not the final autonomous-driving system. Structure and documentation only; camera/model code has not been implemented.
+Python application for local live camera capture and cone detection. The capabilities below are the first set of coding goals, not the final autonomous-driving system.
+
+## Implementation status — 2026-10-03
+
+The first application pass is implemented. The intended order is still **Windows Logitech preview first, then model inference**; neither has been verified against physical hardware or the team's real checkpoint yet.
+
+| Area | Status | Notes |
+| --- | --- | --- |
+| Python package and CLI | Implemented | Installable `src/mracing_camera/` package with `preview`, `detect`, `list-cameras`, and `diagnostics` commands. |
+| Logitech USB preview | Ready for first hardware check | OpenCV capture supports Windows backends and configurable camera index/path. Run `python -m mracing_camera preview --source usb --camera 0`. |
+| Image/video sources | Implemented | Image EOF and video EOF are handled; looping is opt-in. |
+| Shared preview pipeline | Implemented, not hardware-tested | Window and browser MJPEG previews, status, snapshots, optional annotated-video recording, and a bounded latest-frame handoff. |
+| Basler acquisition | Implemented, not hardware-tested | Optional pypylon import, device listing/serial selection, BGR conversion, and guarded feature setting. Needs compatible pylon runtime and confirmed camera/interface. |
+| Model inference | Adapter implemented; actual checkpoint unverified | Ultralytics adapter reports metadata class names and returns original-frame boxes. The checkpoint's provenance is not established, so this adapter may not load it. |
+| Automated tests | Verified | Six hardware-independent unit tests pass using the configured Python 3.13.5 environment. |
+| Orin modes | Not hardware-tested | JetPack/Ubuntu/Python/CUDA details and matching packages must be confirmed on the board. |
+
+### Current blockers and next actions
+
+1. **Try Windows Logitech preview.** Install the package using the instructions below, connect the camera, run the preview command, and confirm live frames, snapshot save, and clean `q` exit. No physical camera test has been performed yet.
+2. **Resolve checkpoint compatibility.** `models/best.pt` is not present in this checkout. Supply the team's checkpoint and its original training/export library, version, and inference command. Do not infer compatibility from `.pt` or the reported “YOLO v27 medium” name.
+3. **Run saved-image inference, then live CPU inference.** After the loader and checkpoint are confirmed, verify model classes and boxes on a sample image before measuring laptop capture/inference throughput.
+4. **Verify remote and Basler modes later.** Record the Orin software stack first; confirm the full Basler suffix, interface, connection, and pylon runtime before selecting those dependencies.
+
+**Development environment observed:** Windows 11, Python 3.13.5, NumPy 2.2.6, OpenCV 4.12.0.88, PyTorch 2.8.0; Ultralytics and pypylon are not installed. CUDA was unavailable in the local environment. These are development-machine observations, not a tested environment lock.
 
 ## Initial coding capabilities
 
@@ -41,24 +65,62 @@ Changing dataset configuration is straightforward. Changing the model requires c
 
 ## Open in VS Code
 
-Open this folder as the workspace. Select a project Python environment when we confirm the Python version. No dependencies have been installed or pinned yet.
+Open this folder as the workspace, create a `.venv`, and select it as the VS Code interpreter. See [docs/SETUP.md](docs/SETUP.md) for Windows laptop and Jetson setup. The tested local environment is Python 3.13.5 with NumPy 2.2.6, GUI-capable OpenCV 4.12.0.88 and PyTorch 2.8.0; Ultralytics and pypylon are not installed. No camera or model hardware test has been performed.
 
 ## Structure
 
-- `docs/SETUP.md`: decisions needed before installation and first hardware test.
-- `src/`: reserved for acquisition, preview and inference code.
-- `configs/`: reserved for camera/model settings.
+- `docs/SETUP.md`: environment setup, current verification status and hardware checks.
+- `src/mracing_camera/`: installable package, source adapters, model adapter, preview and app.
+- `configs/default.json`: sample defaults, overridable by command-line options.
 - `models/`: local model weights; ignored by Git except the README.
 - `data/`: local recordings/datasets; ignored by Git except the README.
 
-## First implementation sequence
+## Run the application
 
-1. Confirm the model-loading package and run saved-image/video inference on the laptop.
-2. Add laptop Logitech capture, live preview and detection overlays.
-3. Set up Orin network access, VS Code Remote SSH and compatible dependencies; repeat the Logitech pipeline on the Orin.
-4. Confirm the full Basler model/interface, add Basler acquisition on the Orin and reuse inference/preview logic.
-5. Measure performance for each mode and document reproducible setup steps.
-6. Begin track estimation, localization and candidate path generation after the initial live-perception capabilities work.
+Install the package and its preview dependencies in the selected environment:
+
+```powershell
+python -m pip install -e .
+```
+
+On Windows, start with Logitech preview; this command does not load model weights:
+
+```powershell
+python -m mracing_camera preview --source usb --camera 0
+```
+
+Press `q` to exit or `s` to save a snapshot under `runs/`. Requested capture defaults are 1920 × 1080 at 30 FPS; the application logs negotiated values because the camera may use different settings.
+
+After confirming checkpoint provenance and installing its compatible inference dependencies, run:
+
+```powershell
+python -m mracing_camera detect --source usb --camera 0 --weights models/best.pt --device cpu
+python -m mracing_camera detect --source image --input data/sample.jpg --weights models/best.pt --device cpu --preview none
+```
+
+`best.pt` is not present in this checkout. The model loader defaults to the explicitly integrated Ultralytics adapter but does not assume all PyTorch checkpoints use that format; unsupported checkpoints produce an actionable error. Inference is not verified until the actual checkpoint successfully runs on an image.
+
+Other available commands:
+
+```powershell
+python -m mracing_camera diagnostics
+python -m mracing_camera list-cameras --source basler
+python -m mracing_camera detect --source video --input data/recording.mp4 --weights models/best.pt --preview window
+python -m mracing_camera detect --source usb --camera 0 --weights models/best.pt --preview web --port 8080
+```
+
+Use `--preview window|web|none`, `--record runs/session.mp4`, `--snapshot runs/frame.jpg`, or `--loop` for a video source. A JSON config may be selected with `--config configs/default.json`; explicitly supplied CLI options override it. The full option list is available from `python -m mracing_camera preview --help` and `python -m mracing_camera detect --help`.
+
+Web preview binds to `127.0.0.1` by default. Forward port 8080 from the Orin using VS Code Remote SSH or `ssh -L 8080:127.0.0.1:8080 USER@ORIN_HOST`, then open `http://127.0.0.1:8080` on the laptop. Placeholders are user supplied. Annotated video playback uses the configured FPS and is not a timing-accurate representation when processing FPS varies.
+
+## Verification status
+
+- Hardware-independent pipeline tests cover config precedence, missing weights, detection coordinates, latest-frame buffering, image EOF, and source cleanup.
+- Local Python/OpenCV availability is verified, but a physical Logitech/Orin/Basler test has not been run.
+- `models/best.pt` is absent, and its training/export library and package version are unknown. Inference must be re-tested with the team's actual checkpoint before use.
+- Orin setup still depends on the board's JetPack/Ubuntu/Python/CUDA versions and matching packages. Basler needs pypylon plus the camera-compatible pylon runtime and confirmed hardware details.
+
+Do not implement localization, path planning, LiDAR, ROS, Arducam, training or vehicle control in this stage.
 
 The previously discussed Arducam remains a later hardware-integration consideration, outside these three initial capabilities.
 
@@ -89,7 +151,7 @@ Use a bounded latest-frame handoff for live sources so slow CPU inference does n
 
 ### Model compatibility: resolve, do not guess
 
-`models/best.pt` exists in this local checkout but is intentionally ignored by Git. A fresh clone will need the user to supply it using the link in `models/README.md`. Preserve that checkpoint; do not overwrite it or download substitute weights silently.
+`models/best.pt` is intentionally ignored by Git and is not present in the current checkout. A local copy must be supplied using the link in `models/README.md`. Preserve that checkpoint; do not overwrite it or download substitute weights silently.
 
 “YOLO v27 medium” is an unverified team-reported identifier, not authority to invent an API or package. Inspect checkpoint metadata safely where possible, and determine the actual producing library and version. Do not assume every `.pt` file loads with Ultralytics. If the checkpoint is compatible with a documented loader, integrate it and record the exact package/version and class mapping. Otherwise leave preview fully usable, provide an actionable inference error and ask for the original training/export command or environment. Never report inference as working until a real image succeeds.
 
@@ -97,7 +159,7 @@ Read class names from verified model metadata; do not hard-code UTSMA class IDs 
 
 ### Configuration and proposed CLI
 
-Implement these commands as the intended interface; they do not exist yet:
+The implemented CLI supports these commands:
 
 ```powershell
 # Logitech preview on the Windows laptop
