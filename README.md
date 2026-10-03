@@ -26,9 +26,18 @@ Before this stage, decide how image detections become cone positions and how veh
 - Previously linked Arducam B0353 is the intended camera reference; confirm SKU and Jetson compatibility.
 - Capture target: 1920 × 1080 at 30 FPS; achieved performance must be measured.
 - Development hosts: laptop for the first capability, then Jetson Orin Nano Super for the two remote capabilities.
+- Laptop baseline: Windows, Intel Core Ultra 7, CPU inference. Use the latest stable Python release supported by the selected inference/camera packages; verify compatibility before pinning dependencies.
 - Team-reported pylon Viewer: 26.08. Python capture will use a compatible pypylon version; Viewer can remain closed.
 - Team-reported model: YOLO v27 medium. Supplied PyTorch checkpoint: best.pt. Confirm the compatible inference package and checkpoint metadata before loading.
 - Immediate work is live camera capture and model inference. Track estimation, localization and path generation follow afterward; LiDAR, fusion and vehicle control are deferred.
+
+## Dataset and weights selection
+
+The preferred dataset candidate for now is [UTSMA FSAE cones](https://universe.roboflow.com/utsma/fsae-cones-dataset). Its project page lists 9,521 images, four dataset versions and six classes: `blue_cone`, `yellow_cone`, `orange_cone`, `large_orange_cone`, `unknown_cone`, and `objects`. It lists CC BY 4.0; preserve attribution when using it. Select a specific version and inspect its labels/splits before training. Project image count is not the same as a version's exported count, which may include augmentations.
+
+The [University of Michigan cones dataset v2](https://universe.roboflow.com/university-of-michigan-znckk/cones-4b8zo/dataset/2) is a possible source for the existing checkpoint, but that relationship is unconfirmed.
+
+Changing dataset configuration is straightforward. Changing the model requires compatible trained weights or training/fine-tuning on the selected dataset, plus verifying class mappings and preprocessing. More images alone do not establish better performance. The UTSMA page advertises a Roboflow 3.0 Object Detection (Fast) model; it is not verified as a downloadable checkpoint compatible with our reported YOLO model. Keep the supplied `best.pt` unchanged until its provenance/loading package is confirmed.
 
 ## Open in VS Code
 
